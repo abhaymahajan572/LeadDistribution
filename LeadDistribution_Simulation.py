@@ -44,7 +44,7 @@ if "configured" not in st.session_state:
         st.session_state.current_round = 1
         st.session_state.results = []
         st.session_state.configured = True
-        st.experimental_set_query_params(started="true")
+        st.query_params["started"] = "true"
         st.stop()
 
 # Step 2: Run Simulation
@@ -99,8 +99,8 @@ if st.session_state.get("configured", False) and st.session_state.current_round 
             st.session_state.client_data[i]["Time Since Last Lead"] = df.loc[i, "Time Since Last Lead"]
 
         st.session_state.current_round += 1
-        st.experimental_set_query_params(round=st.session_state.current_round)
-        st.experimental_rerun()
+        st.query_params["round"] = str(st.session_state.current_round)
+        st.rerun()
 
 elif st.session_state.get("configured", False):
     st.success("✅ Simulation Complete!")
