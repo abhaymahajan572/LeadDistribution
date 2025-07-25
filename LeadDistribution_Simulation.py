@@ -11,78 +11,83 @@ import streamlit as st
 import pandas as pd
 
 st.set_page_config(page_title="Lead Distribution Simulator", layout="wide")
-
 st.title("🔁 Lead Distribution Simulator")
 
 # Step 1: Configuration Inputs
-st.sidebar.header("Simulation Settings")
-num_clients = st.sidebar.number_input("Number of Clients", min_value=2, max_value=20, value=3)
-num_rounds = st.sidebar.number_input("Number of Rounds", min_value=1, value=5)
+if "configured" not in st.session_state:
+    st.sidebar.header("Simulation Settings")
+    num_clients = st.sidebar.number_input("Number of Clients", min_value=2, max_value=20, value=3)
+    num_rounds = st.sidebar.number_input("Number of Rounds", min_value=1, value=5)
 
-st.sidebar.header("Weights (Must sum to 1)")
-w_cpl = st.sidebar.slider("CPL Weight", 0.0, 1.0, 0.25)
-w_budget = st.sidebar.slider("Budget Utilization Weight", 0.0, 1.0, 0.5)
-w_time = round(1.0 - (w_cpl + w_budget), 2)
-st.sidebar.text(f"Recency Weight (auto): {w_time}")
+    st.sidebar.header("Weights (Must sum to 1)")
+    w_cpl = st.sidebar.slider("CPL Weight", 0.0, 1.0, 0.25)
+    w_budget = st.sidebar.slider("Budget Utilization Weight", 0.0, 1.0, 0.5)
+    w_time = round(1.0 - (w_cpl + w_budget), 2)
+    st.sidebar.text(f"Recency Weight (auto): {w_time}")
 
-# Step 2: Client Setup
-st.subheader("📥 Enter Client Details")
-client_data = []
+    st.subheader("📥 Enter Client Details")
+    client_data = []
+    for i in range(num_clients):
+        with st.expander(f"Client {i+1}", expanded=True):
+            cpl = st.number_input(f"Client {i+1} CPL Bid", key=f"cpl_{i}")
+            budget = st.number_input(f"Client {i+1} Budget", key=f"budget_{i}")
+            time_since_last = st.number_input(f"Client {i+1} Initial Time Since Last Lead (hrs)", key=f"time_{i}")
+            client_data.append({
+                'Client': f'Client {i+1}',
+                'CPL': cpl,
+                'Budget': budget,
+                'Remaining Budget': budget,
+                'Time Since Last Lead': time_since_last
+            })
 
-for i in range(num_clients):
-    with st.expander(f"Client {i+1}", expanded=True):
-        cpl = st.number_input(f"Client {i+1} CPL Bid", key=f"cpl_{i}")
-        budget = st.number_input(f"Client {i+1} Budget", key=f"budget_{i}")
-        time_since_last = st.number_input(f"Client {i+1} Initial Time Since Last Lead (hrs)", key=f"time_{i}")
-        client_data.append({
-            'Client': f'Client {i+1}',
-            'CPL': cpl,
-            'Budget': budget,
-            'Remaining Budget': budget,
-            'Time Since Last Lead': time_since_last
-        })
+    if st.button("Run Simulation"):
+        st.session_state.client_data = client_data
+        st.session_state.num_clients = num_clients
+        st.session_state.num_rounds = num_rounds
+        st.session_state.w_cpl = w_cpl
+        st.session_state.w_budget = w_budget
+        st.session_state.w_time = w_time
+        st.session_state.results = []
+        st.session_state.current_round = 1
+        st.session_state.configured = True
+        st.experimental_rerun()
 
-# Run simulation
-if st.button("Run Simulation"):
-    results = []
-    for r in range(1, num_rounds+1):
-        df = pd.DataFrame(client_data)
-        df["Budget Utilization"] = 1 - (df["Remaining Budget"] / df["Budget"])
-        df["norm_CPL"] = (df["CPL"] - df["CPL"].min()) / (df["CPL"].max() - df["CPL"].min() + 1e-6)
-        df["norm_Recency"] = (df["Time Since Last Lead"] - df["Time Since Last Lead"].min()) / \
-                             (df["Time Since Last Lead"].max() - df["Time Since Last Lead"].min() + 1e-6)
-        df["Score"] = (1 - df["norm_CPL"]) * w_cpl + \
-                      (1 - df["Budget Utilization"]) * w_budget + \
-                      df["norm_Recency"] * w_time
+# Step 2: Simulation Loop
+if "configured" in st.session_state and st.session_state.current_round <= st.session_state.num_rounds:
+    r = st.session_state.current_round
+    client_data = st.session_state.client_data
+    df = pd.DataFrame(client_data)
+    df["Budget Utilization"] = 1 - (df["Remaining Budget"] / df["Budget"])
+    df["norm_CPL"] = (df["CPL"] - df["CPL"].min()) / (df["CPL"].max() - df["CPL"].min() + 1e-6)
+    df["norm_Recency"] = (df["Time Since Last Lead"] - df["Time Since Last Lead"].min()) / \
+                         (df["Time Since Last Lead"].max() - df["Time Since Last Lead"].min() + 1e-6)
+    df["Score"] = (1 - df["norm_CPL"]) * st.session_state.w_cpl + \
+                  (1 - df["Budget Utilization"]) * st.session_state.w_budget + \
+                  df["norm_Recency"] * st.session_state.w_time
 
-        lead_winner_idx = df["Score"].idxmax()
-        lead_winner = df.loc[lead_winner_idx, "Client"]
-        df.at[lead_winner_idx, "Remaining Budget"] -= df.loc[lead_winner_idx, "CPL"]
+    lead_winner_idx = df["Score"].idxmax()
+    lead_winner = df.loc[lead_winner_idx, "Client"]
+    df.at[lead_winner_idx, "Remaining Budget"] -= df.loc[lead_winner_idx, "CPL"]
 
-        st.subheader(f"🔄 Round {r} Result")
-        st.dataframe(df[["Client", "CPL", "Remaining Budget", "Time Since Last Lead", "Score"]])
+    st.subheader(f"🔄 Round {r} Result")
+    st.dataframe(df[["Client", "CPL", "Remaining Budget", "Time Since Last Lead", "Score"]])
 
-        # Time adjustment input
-        st.markdown("### ⏱️ Update Time Since Last Lead (in hours)")
-        time_inputs = {}
-        for i in range(len(df)):
-            label = f"{df.loc[i, 'Client']} - {'🔔 Got Lead' if i == lead_winner_idx else ''}"
-            time_inputs[i] = st.number_input(f"{label}", key=f"round{r}_time_{i}", value=0.0)
+    # Time adjustment input
+    st.markdown("### ⏱️ Update Time Since Last Lead (in hours)")
+    time_inputs = {}
+    for i in range(len(df)):
+        label = f"{df.loc[i, 'Client']} - {'🔔 Got Lead' if i == lead_winner_idx else ''}"
+        time_inputs[i] = st.number_input(f"{label}", key=f"round{r}_time_{i}", value=0.0)
 
-        proceed = st.button(f"👉 Proceed to Next Round (After Round {r})", key=f"proceed_{r}")
-        if not proceed:
-            st.stop()
-
-        # Update time since last lead
+    if st.button(f"👉 Proceed to Next Round (After Round {r})", key=f"proceed_{r}"):
         for i in range(len(df)):
             if i == lead_winner_idx:
                 df.at[i, "Time Since Last Lead"] = time_inputs[i]
             else:
                 df.at[i, "Time Since Last Lead"] += time_inputs[i]
 
-        # Save round result
         for i in range(len(df)):
-            results.append({
+            st.session_state.results.append({
                 "Round": r,
                 "Client": df.loc[i, "Client"],
                 "CPL": df.loc[i, "CPL"],
@@ -92,16 +97,18 @@ if st.button("Run Simulation"):
                 "Got Lead": "Yes" if i == lead_winner_idx else "No"
             })
 
-        # Update main client_data state
-        for i in range(len(client_data)):
-            client_data[i]["Remaining Budget"] = df.loc[i, "Remaining Budget"]
-            client_data[i]["Time Since Last Lead"] = df.loc[i, "Time Since Last Lead"]
+        # Update persistent data
+        for i in range(len(st.session_state.client_data)):
+            st.session_state.client_data[i]["Remaining Budget"] = df.loc[i, "Remaining Budget"]
+            st.session_state.client_data[i]["Time Since Last Lead"] = df.loc[i, "Time Since Last Lead"]
 
-    # Export results
+        st.session_state.current_round += 1
+        st.experimental_rerun()
+
+elif "configured" in st.session_state:
     st.success("✅ Simulation Complete!")
-    result_df = pd.DataFrame(results)
+    result_df = pd.DataFrame(st.session_state.results)
     st.dataframe(result_df)
-
     csv = result_df.to_csv(index=False).encode('utf-8')
     st.download_button("📥 Download Results as CSV", data=csv, file_name="lead_simulation_results.csv", mime="text/csv")
 
