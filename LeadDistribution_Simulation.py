@@ -69,6 +69,10 @@ if st.button("Run Simulation"):
             label = f"{df.loc[i, 'Client']} - {'🔔 Got Lead' if i == lead_winner_idx else ''}"
             time_inputs[i] = st.number_input(f"{label}", key=f"round{r}_time_{i}", value=0.0)
 
+        proceed = st.button(f"👉 Proceed to Next Round (After Round {r})", key=f"proceed_{r}")
+        if not proceed:
+            st.stop()
+
         # Update time since last lead
         for i in range(len(df)):
             if i == lead_winner_idx:
