@@ -13,26 +13,26 @@ import pandas as pd
 st.set_page_config(page_title="Lead Distribution Simulator", layout="wide")
 st.title("🔁 Lead Distribution Simulator")
 
-# Step 1: Configuration Inputs
+# Step 1: Setup session state if not already done
 if "configured" not in st.session_state:
     st.sidebar.header("Simulation Settings")
-    num_clients = st.sidebar.number_input("Number of Clients", min_value=2, max_value=20, value=3)
-    num_rounds = st.sidebar.number_input("Number of Rounds", min_value=1, value=5)
+    st.session_state.num_clients = st.sidebar.number_input("Number of Clients", min_value=2, max_value=20, value=3)
+    st.session_state.num_rounds = st.sidebar.number_input("Number of Rounds", min_value=1, value=5)
 
     st.sidebar.header("Weights (Must sum to 1)")
-    w_cpl = st.sidebar.slider("CPL Weight", 0.0, 1.0, 0.25)
-    w_budget = st.sidebar.slider("Budget Utilization Weight", 0.0, 1.0, 0.5)
-    w_time = round(1.0 - (w_cpl + w_budget), 2)
-    st.sidebar.text(f"Recency Weight (auto): {w_time}")
+    st.session_state.w_cpl = st.sidebar.slider("CPL Weight", 0.0, 1.0, 0.25)
+    st.session_state.w_budget = st.sidebar.slider("Budget Utilization Weight", 0.0, 1.0, 0.5)
+    st.session_state.w_time = round(1.0 - (st.session_state.w_cpl + st.session_state.w_budget), 2)
+    st.sidebar.text(f"Recency Weight (auto): {st.session_state.w_time}")
 
     st.subheader("📥 Enter Client Details")
-    client_data = []
-    for i in range(num_clients):
+    st.session_state.client_data = []
+    for i in range(st.session_state.num_clients):
         with st.expander(f"Client {i+1}", expanded=True):
             cpl = st.number_input(f"Client {i+1} CPL Bid", key=f"cpl_{i}")
             budget = st.number_input(f"Client {i+1} Budget", key=f"budget_{i}")
             time_since_last = st.number_input(f"Client {i+1} Initial Time Since Last Lead (hrs)", key=f"time_{i}")
-            client_data.append({
+            st.session_state.client_data.append({
                 'Client': f'Client {i+1}',
                 'CPL': cpl,
                 'Budget': budget,
@@ -41,22 +41,17 @@ if "configured" not in st.session_state:
             })
 
     if st.button("Run Simulation"):
-        st.session_state.client_data = client_data
-        st.session_state.num_clients = num_clients
-        st.session_state.num_rounds = num_rounds
-        st.session_state.w_cpl = w_cpl
-        st.session_state.w_budget = w_budget
-        st.session_state.w_time = w_time
-        st.session_state.results = []
         st.session_state.current_round = 1
+        st.session_state.results = []
         st.session_state.configured = True
-        st.experimental_rerun()
+        st.experimental_set_query_params(started="true")
+        st.stop()
 
-# Step 2: Simulation Loop
-if "configured" in st.session_state and st.session_state.current_round <= st.session_state.num_rounds:
+# Step 2: Run Simulation
+if st.session_state.get("configured", False) and st.session_state.current_round <= st.session_state.num_rounds:
     r = st.session_state.current_round
-    client_data = st.session_state.client_data
-    df = pd.DataFrame(client_data)
+    st.subheader(f"🔁 Round {r}")
+    df = pd.DataFrame(st.session_state.client_data)
     df["Budget Utilization"] = 1 - (df["Remaining Budget"] / df["Budget"])
     df["norm_CPL"] = (df["CPL"] - df["CPL"].min()) / (df["CPL"].max() - df["CPL"].min() + 1e-6)
     df["norm_Recency"] = (df["Time Since Last Lead"] - df["Time Since Last Lead"].min()) / \
@@ -69,23 +64,24 @@ if "configured" in st.session_state and st.session_state.current_round <= st.ses
     lead_winner = df.loc[lead_winner_idx, "Client"]
     df.at[lead_winner_idx, "Remaining Budget"] -= df.loc[lead_winner_idx, "CPL"]
 
-    st.subheader(f"🔄 Round {r} Result")
     st.dataframe(df[["Client", "CPL", "Remaining Budget", "Time Since Last Lead", "Score"]])
 
-    # Time adjustment input
     st.markdown("### ⏱️ Update Time Since Last Lead (in hours)")
-    time_inputs = {}
+    time_updates = []
     for i in range(len(df)):
         label = f"{df.loc[i, 'Client']} - {'🔔 Got Lead' if i == lead_winner_idx else ''}"
-        time_inputs[i] = st.number_input(f"{label}", key=f"round{r}_time_{i}", value=0.0)
+        val = st.number_input(f"{label}", key=f"round{r}_time_{i}", value=0.0)
+        time_updates.append(val)
 
-    if st.button(f"👉 Proceed to Next Round (After Round {r})", key=f"proceed_{r}"):
+    if st.button("👉 Proceed to Next Round"):
         for i in range(len(df)):
+            new_time = time_updates[i]
             if i == lead_winner_idx:
-                df.at[i, "Time Since Last Lead"] = time_inputs[i]
+                df.at[i, "Time Since Last Lead"] = new_time
             else:
-                df.at[i, "Time Since Last Lead"] += time_inputs[i]
+                df.at[i, "Time Since Last Lead"] += new_time
 
+        # Save the round results
         for i in range(len(df)):
             st.session_state.results.append({
                 "Round": r,
@@ -97,15 +93,16 @@ if "configured" in st.session_state and st.session_state.current_round <= st.ses
                 "Got Lead": "Yes" if i == lead_winner_idx else "No"
             })
 
-        # Update persistent data
-        for i in range(len(st.session_state.client_data)):
+        # Update session client data
+        for i in range(len(df)):
             st.session_state.client_data[i]["Remaining Budget"] = df.loc[i, "Remaining Budget"]
             st.session_state.client_data[i]["Time Since Last Lead"] = df.loc[i, "Time Since Last Lead"]
 
         st.session_state.current_round += 1
+        st.experimental_set_query_params(round=st.session_state.current_round)
         st.experimental_rerun()
 
-elif "configured" in st.session_state:
+elif st.session_state.get("configured", False):
     st.success("✅ Simulation Complete!")
     result_df = pd.DataFrame(st.session_state.results)
     st.dataframe(result_df)
@@ -113,10 +110,5 @@ elif "configured" in st.session_state:
     st.download_button("📥 Download Results as CSV", data=csv, file_name="lead_simulation_results.csv", mime="text/csv")
 
 
-# Save the script to a .py file
-# script_path = "/mnt/data/lead_distribution_simulator.py"
-# with open(script_path, "w") as f:
-#     f.write(script_content)
 
-# script_path
 
