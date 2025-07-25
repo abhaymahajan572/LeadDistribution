@@ -21,7 +21,7 @@ if "configured" not in st.session_state:
 
     st.sidebar.header("Weights (Must sum to 1)")
     st.session_state.w_cpl = st.sidebar.slider("CPL Weight", 0.0, 1.0, 0.25)
-    st.session_state.w_budget = st.sidebar.slider("Budget Utilization Weight", 0.0, 1.0, 0.5)
+    st.session_state.w_budget = st.sidebar.slider("Budget Remaining Weight", 0.0, 1.0, 0.5)
     st.session_state.w_time = round(1.0 - (st.session_state.w_cpl + st.session_state.w_budget), 2)
     st.sidebar.text(f"Recency Weight (auto): {st.session_state.w_time}")
 
@@ -52,19 +52,25 @@ if st.session_state.get("configured", False) and st.session_state.current_round 
     r = st.session_state.current_round
     st.subheader(f"🔁 Round {r}")
     df = pd.DataFrame(st.session_state.client_data)
-    df["Budget Utilization"] = 1 - (df["Remaining Budget"] / df["Budget"])
+
+    # Correct logic: Budget Remaining Ratio = Remaining Budget / Total Budget
+    df["Budget Remaining Ratio"] = df["Remaining Budget"] / df["Budget"]
+
+    # Normalize CPL and Recency
     df["norm_CPL"] = (df["CPL"] - df["CPL"].min()) / (df["CPL"].max() - df["CPL"].min() + 1e-6)
     df["norm_Recency"] = (df["Time Since Last Lead"] - df["Time Since Last Lead"].min()) / \
                          (df["Time Since Last Lead"].max() - df["Time Since Last Lead"].min() + 1e-6)
+
+    # Final Score Calculation
     df["Score"] = (1 - df["norm_CPL"]) * st.session_state.w_cpl + \
-                  (1 - df["Budget Utilization"]) * st.session_state.w_budget + \
+                  df["Budget Remaining Ratio"] * st.session_state.w_budget + \
                   df["norm_Recency"] * st.session_state.w_time
 
     lead_winner_idx = df["Score"].idxmax()
     lead_winner = df.loc[lead_winner_idx, "Client"]
     df.at[lead_winner_idx, "Remaining Budget"] -= df.loc[lead_winner_idx, "CPL"]
 
-    st.dataframe(df[["Client", "CPL", "Remaining Budget", "Time Since Last Lead", "Score"]])
+    st.dataframe(df[["Client", "CPL", "Remaining Budget", "Budget Remaining Ratio", "Time Since Last Lead", "Score"]])
 
     st.markdown("### ⏱️ Update Time Since Last Lead (in hours)")
     time_updates = []
@@ -81,7 +87,6 @@ if st.session_state.get("configured", False) and st.session_state.current_round 
             else:
                 df.at[i, "Time Since Last Lead"] += new_time
 
-        # Save the round results
         for i in range(len(df)):
             st.session_state.results.append({
                 "Round": r,
@@ -93,7 +98,6 @@ if st.session_state.get("configured", False) and st.session_state.current_round 
                 "Got Lead": "Yes" if i == lead_winner_idx else "No"
             })
 
-        # Update session client data
         for i in range(len(df)):
             st.session_state.client_data[i]["Remaining Budget"] = df.loc[i, "Remaining Budget"]
             st.session_state.client_data[i]["Time Since Last Lead"] = df.loc[i, "Time Since Last Lead"]
@@ -108,7 +112,6 @@ elif st.session_state.get("configured", False):
     st.dataframe(result_df)
     csv = result_df.to_csv(index=False).encode('utf-8')
     st.download_button("📥 Download Results as CSV", data=csv, file_name="lead_simulation_results.csv", mime="text/csv")
-
 
 
 
